@@ -57,6 +57,38 @@ python scripts/run_eda.py --growers il-grower,ne-grower
 python scripts/run_eda.py --categories boundaries,weather
 ```
 
+## Data Dictionary
+
+### Output files
+
+| File | Content | Source |
+|---|---|---|
+| `plots/boundaries/field_area_histogram.png` | Field area density by state | `field_boundaries.geojson` → `area_acres` |
+| `plots/boundaries/field_size_summary.png` | Mean area ± SD per state | same |
+| `plots/boundaries/field_area_comparison.png` | Box plot — field area per state | same |
+| `plots/cdl/crop_composition_by_grower.png` | Crop % stacked bar | `*_cdl_*_full_composition.csv` → `crop_name`, `pct` |
+| `plots/cdl/crop_diversity_by_field.png` | Distinct crop types per field | `*_crop_rotation.csv` → `crop_diversity` |
+| `plots/cdl/corn_soy_rotation_comparison.png` | Mean corn vs soy years | same → `corn_years`, `soybean_years` |
+| `plots/weather/monthly_temperature_cycle.png` | Monthly mean temp (°C) | `*_weather_*.csv` → `T2M`, `date` |
+| `plots/weather/annual_precipitation.png` | Yearly total precip (mm) | same → `PRECTOTCORR`, `date` |
+| `plots/weather/gdd_comparison.png` | Cumulative GDD (base 10°C) | same → `T2M_MAX`, `T2M_MIN` |
+| `plots/geospatial/grower_overview_map.png` | Field centroids on state map | `field_boundaries.geojson` → centroid |
+| `report/assignment2_eda_report.html` | Self-contained HTML with all figures | all of the above |
+
+### Key input columns
+
+| Column | Source | Type | Used in |
+|---|---|---|---|
+| `area_acres` | `field_boundaries.geojson` | float | boundary plots |
+| `crop_name` | `*_cdl_*_full_composition.csv` | str | crop composition |
+| `pct` | same | float | crop composition |
+| `crop_diversity` | `*_crop_rotation.csv` | int | crop diversity |
+| `corn_years`, `soybean_years` | same | int | rotation comparison |
+| `T2M` | `*_weather_*.csv` | float (°C) | temperature |
+| `T2M_MAX`, `T2M_MIN` | same | float (°C) | GDD |
+| `PRECTOTCORR` | same | float (mm) | precipitation |
+| `date` | same | date | all weather plots |
+
 ## Requirements
 
 - Python 3.10+ with `pandas`, `geopandas`, `matplotlib` (already in the pipeline venv)

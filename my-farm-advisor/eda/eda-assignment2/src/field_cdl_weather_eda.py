@@ -127,12 +127,13 @@ def plot_field_area_histogram(data: pd.DataFrame, output_base: Path) -> Path:
         subset = data[data["grower_slug"] == slug]["area_acres"]
         ax.hist(
             subset, bins=15, alpha=0.5, color=_color(slug),
-            label=_label(slug), density=True,
+            label=f'{_label(slug)} (n={len(subset)})', density=True,
         )
     ax.set_xlabel("Field area (acres)")
-    ax.set_ylabel("Density")
+    ax.set_ylabel("Probability density")
     ax.set_title("Field area distribution by state")
     ax.legend()
+    ax.grid(True, alpha=0.3)
     plt.tight_layout()
     fig.savefig(out, dpi=150, bbox_inches="tight")
     plt.close(fig)
@@ -145,14 +146,19 @@ def plot_field_size_summary(data: pd.DataFrame, output_base: Path) -> Path:
     fig, ax = plt.subplots(figsize=(8, 5))
     x = range(len(stats))
     labels = [_label(s) for s in stats.index]
-    ax.bar(
+    bars = ax.bar(
         x, stats["mean"], yerr=stats["std"], capsize=5,
         color=[_color(s) for s in stats.index], alpha=0.8,
     )
+    for bar, idx in zip(bars, stats.index):
+        n = int(stats.loc[idx, "count"])
+        ax.text(bar.get_x() + bar.get_width() / 2, bar.get_height() + stats.loc[idx, "std"] + 10,
+                f"n={n}", ha="center", fontsize=9)
     ax.set_xticks(x)
     ax.set_xticklabels(labels)
     ax.set_ylabel("Mean field area (acres)")
-    ax.set_title("Mean field size by state")
+    ax.set_title("Mean field size by state (error bars: \u00b11 SD)")
+    ax.grid(True, alpha=0.3, axis="y")
     plt.tight_layout()
     fig.savefig(out, dpi=150, bbox_inches="tight")
     plt.close(fig)
@@ -162,16 +168,19 @@ def plot_field_size_summary(data: pd.DataFrame, output_base: Path) -> Path:
 def plot_field_area_comparison(data: pd.DataFrame, output_base: Path) -> Path:
     out = _output_dir(output_base, "boundaries") / "field_area_comparison.png"
     fig, ax = plt.subplots(figsize=(8, 5))
-    groups = [data[data["grower_slug"] == s]["area_acres"] for s in sorted(data["grower_slug"].unique())]
-    labels = [_label(s) for s in sorted(data["grower_slug"].unique())]
-    colors = [_color(s) for s in sorted(data["grower_slug"].unique())]
+    slugs = sorted(data["grower_slug"].unique())
+    groups = [data[data["grower_slug"] == s]["area_acres"] for s in slugs]
+    labels = [_label(s) for s in slugs]
+    colors = [_color(s) for s in slugs]
+    labels_w_n = [f"{l}\n(n={len(g)})" for l, g in zip(labels, groups)]
     bp = ax.boxplot(groups, patch_artist=True)
-    ax.set_xticklabels(labels)
+    ax.set_xticklabels(labels_w_n)
     for patch, c in zip(bp["boxes"], colors):
         patch.set_facecolor(c)
         patch.set_alpha(0.6)
     ax.set_ylabel("Field area (acres)")
     ax.set_title("Field area comparison across states")
+    ax.grid(True, alpha=0.3, axis="y")
     plt.tight_layout()
     fig.savefig(out, dpi=150, bbox_inches="tight")
     plt.close(fig)
@@ -192,11 +201,12 @@ def plot_crop_composition(data: pd.DataFrame, output_base: Path) -> Path:
     pivot = pivot[top]
 
     fig, ax = plt.subplots(figsize=(10, 5))
-    pivot.plot(kind="barh", stacked=True, ax=ax, colormap="Set2")
-    ax.set_xlabel("Percent of cropland")
+    bars = pivot.plot(kind="barh", stacked=True, ax=ax, colormap="Set2")
+    ax.set_xlabel("Percent of CDL pixels (%)")
     ax.set_ylabel("")
-    ax.set_title("Crop composition by state (CDL 2021-2025)")
+    ax.set_title("Crop composition by state (CDL 2021\u20132025)")
     ax.legend(loc="lower right", fontsize=8)
+    ax.grid(True, alpha=0.3, axis="x")
     plt.tight_layout()
     fig.savefig(out, dpi=150, bbox_inches="tight")
     plt.close(fig)
@@ -210,13 +220,15 @@ def plot_crop_diversity(data: pd.DataFrame, output_base: Path) -> Path:
     groups = [data[data["grower_slug"] == s]["crop_diversity"] for s in slugs]
     labels = [_label(s) for s in slugs]
     colors = [_color(s) for s in slugs]
+    labels_w_n = [f"{l}\n(n={len(g)})" for l, g in zip(labels, groups)]
     bp = ax.boxplot(groups, patch_artist=True)
-    ax.set_xticklabels(labels)
+    ax.set_xticklabels(labels_w_n)
     for patch, c in zip(bp["boxes"], colors):
         patch.set_facecolor(c)
         patch.set_alpha(0.6)
     ax.set_ylabel("Distinct crop types per field")
-    ax.set_title("Crop diversity by state")
+    ax.set_title("Crop diversity per field (CDL 2021\u20132025)")
+    ax.grid(True, alpha=0.3, axis="y")
     plt.tight_layout()
     fig.savefig(out, dpi=150, bbox_inches="tight")
     plt.close(fig)
@@ -234,12 +246,19 @@ def plot_corn_soy_rotation(data: pd.DataFrame, output_base: Path) -> Path:
     ax.set_xticks(x)
     ax.set_xticklabels(stats["grower_label"])
     ax.set_ylabel("Mean years (out of 5)")
-    ax.set_title("Mean corn and soybean years per field")
+    ax.set_title("Mean corn and soybean years per field (2021\u20132025)")
+    ax.set_ylim(0, 5.5)
+    ax.axhline(2.5, color="gray", linewidth=0.8, linestyle="--", alpha=0.5)
     ax.legend()
+    ax.grid(True, alpha=0.3, axis="y")
     plt.tight_layout()
     fig.savefig(out, dpi=150, bbox_inches="tight")
     plt.close(fig)
     return out
+
+
+MONTH_LABELS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun",
+                "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"]
 
 
 def plot_monthly_temperature(data: pd.DataFrame, output_base: Path) -> Path:
@@ -256,9 +275,11 @@ def plot_monthly_temperature(data: pd.DataFrame, output_base: Path) -> Path:
         )
     ax.set_xlabel("Month")
     ax.set_ylabel("Mean temperature (°C)")
-    ax.set_title("Monthly mean temperature cycle (2021-2025)")
+    ax.set_title("Monthly mean temperature cycle (2021\u20132025)")
     ax.set_xticks(range(1, 13))
+    ax.set_xticklabels(MONTH_LABELS)
     ax.legend()
+    ax.grid(True, alpha=0.3)
     plt.tight_layout()
     fig.savefig(out, dpi=150, bbox_inches="tight")
     plt.close(fig)
@@ -270,18 +291,20 @@ def plot_annual_precipitation(data: pd.DataFrame, output_base: Path) -> Path:
     data = data.copy()
     data["year"] = data["date"].dt.year
     yearly = data.groupby(["grower_slug", "year", "field_id"])["PRECTOTCORR"].sum().reset_index()
-    yearly = yearly.groupby(["grower_slug", "year"])["PRECTOTCORR"].mean().reset_index()
+    yearly_stats = yearly.groupby(["grower_slug", "year"])["PRECTOTCORR"].agg(["mean", "std"]).reset_index()
     fig, ax = plt.subplots(figsize=(10, 6))
-    for slug in sorted(yearly["grower_slug"].unique()):
-        subset = yearly[yearly["grower_slug"] == slug]
-        ax.plot(
-            subset["year"], subset["PRECTOTCORR"], marker="s", color=_color(slug),
-            label=_label(slug), linewidth=2,
+    for slug in sorted(yearly_stats["grower_slug"].unique()):
+        subset = yearly_stats[yearly_stats["grower_slug"] == slug]
+        ax.errorbar(
+            subset["year"], subset["mean"], yerr=subset["std"],
+            marker="s", color=_color(slug), label=_label(slug),
+            linewidth=2, capsize=4, capthick=1,
         )
     ax.set_xlabel("Year")
     ax.set_ylabel("Total precipitation (mm)")
-    ax.set_title("Annual total precipitation by state")
+    ax.set_title("Annual total precipitation by state (\u00b11 SD across fields)")
     ax.legend()
+    ax.grid(True, alpha=0.3)
     plt.tight_layout()
     fig.savefig(out, dpi=150, bbox_inches="tight")
     plt.close(fig)
@@ -306,9 +329,10 @@ def plot_gdd_comparison(data: pd.DataFrame, output_base: Path) -> Path:
             label=_label(slug), linewidth=2,
         )
     ax.set_xlabel("Day of year")
-    ax.set_ylabel("Cumulative GDD (base 10°C)")
-    ax.set_title("Mean cumulative growing degree days")
+    ax.set_ylabel("Cumulative GDD (base 10\u00b0C)")
+    ax.set_title("Mean cumulative growing degree days (2021\u20132025)")
     ax.legend()
+    ax.grid(True, alpha=0.3)
     plt.tight_layout()
     fig.savefig(out, dpi=150, bbox_inches="tight")
     plt.close(fig)
@@ -355,10 +379,11 @@ def plot_grower_overview_map(data: pd.DataFrame, output_base: Path) -> Path:
 
     ax.set_xlim(bbox[0] - pad_x, bbox[2] + pad_x)
     ax.set_ylim(bbox[1] - pad_y, bbox[3] + pad_y)
-    ax.set_title("Grower field overview — IL, IA, NE")
+    ax.set_title("Grower field overview \u2014 IL, IA, NE (30 fields)")
     ax.set_xlabel("Longitude")
     ax.set_ylabel("Latitude")
-    ax.legend()
+    ax.grid(True, alpha=0.3, linestyle=":")
+    ax.legend(loc="upper right")
     plt.tight_layout()
     fig.savefig(out, dpi=150, bbox_inches="tight")
     plt.close(fig)
