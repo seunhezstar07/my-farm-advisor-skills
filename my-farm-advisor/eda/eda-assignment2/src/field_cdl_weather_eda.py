@@ -42,6 +42,7 @@ def load_grower_data(grower_slugs: list[str], runtime_base: Path) -> dict:
     all_rotations: list[pd.DataFrame] = []
     all_weather: list[pd.DataFrame] = []
     all_composition: list[pd.DataFrame] = []
+    all_soil: list[pd.DataFrame] = []
 
     for slug in grower_slugs:
         farms_dir = growers_root / slug / "farms"
@@ -80,13 +81,21 @@ def load_grower_data(grower_slugs: list[str], runtime_base: Path) -> dict:
                         }
                     )
 
-            rotation_path = tables / f"{prefix}_crop_rotation.csv"
+                    rotation_path = tables / f"{prefix}_crop_rotation.csv"
             if rotation_path.exists():
                 df = pd.read_csv(rotation_path)
                 df["grower_slug"] = slug
                 df["grower_label"] = gdf_label
                 df["farm_slug"] = farm_slug
                 all_rotations.append(df)
+
+            soil_summary_path = tables / f"{prefix}_ssurgo_summary.csv"
+            if soil_summary_path.exists():
+                sdf = pd.read_csv(soil_summary_path)
+                sdf["grower_slug"] = slug
+                sdf["grower_label"] = gdf_label
+                sdf["farm_slug"] = farm_slug
+                all_soil.append(sdf)
 
             weather_path = tables / f"{prefix}_weather_2021_2025.csv"
             if weather_path.exists():
@@ -109,6 +118,7 @@ def load_grower_data(grower_slugs: list[str], runtime_base: Path) -> dict:
         "rotations": pd.concat(all_rotations, ignore_index=True) if all_rotations else pd.DataFrame(),
         "weather": pd.concat(all_weather, ignore_index=True) if all_weather else pd.DataFrame(),
         "composition": pd.concat(all_composition, ignore_index=True) if all_composition else pd.DataFrame(),
+        "soil": pd.concat(all_soil, ignore_index=True) if all_soil else pd.DataFrame(),
     }
 
 
@@ -390,6 +400,79 @@ def plot_grower_overview_map(data: pd.DataFrame, output_base: Path) -> Path:
     return out
 
 
+def plot_soil_ph(data: pd.DataFrame, output_base: Path) -> Path:
+    out = _output_dir(output_base, "soil") / "soil_ph_by_state.png"
+    fig, ax = plt.subplots(figsize=(8, 5))
+    slugs = sorted(data["grower_slug"].unique())
+    groups = [data[data["grower_slug"] == s]["avg_ph"].dropna() for s in slugs]
+    labels = [_label(s) for s in slugs]
+    colors = [_color(s) for s in slugs]
+    labels_w_n = [f"{l}\n(n={len(g)})" for l, g in zip(labels, groups)]
+    bp = ax.boxplot(groups, patch_artist=True)
+    ax.set_xticklabels(labels_w_n)
+    for patch, c in zip(bp["boxes"], colors):
+        patch.set_facecolor(c)
+        patch.set_alpha(0.6)
+    ax.axhline(6.5, color="gray", linewidth=0.8, linestyle="--", alpha=0.5, label="Neutral (pH 7)")
+    ax.axhline(7.0, color="gray", linewidth=0.8, linestyle=":", alpha=0.4)
+    ax.set_ylabel("Soil pH")
+    ax.set_title("Soil pH by state (SSURGO)")
+    ax.legend(fontsize=8)
+    ax.grid(True, alpha=0.3, axis="y")
+    plt.tight_layout()
+    fig.savefig(out, dpi=150, bbox_inches="tight")
+    plt.close(fig)
+    return out
+
+
+def plot_soil_om(data: pd.DataFrame, output_base: Path) -> Path:
+    out = _output_dir(output_base, "soil") / "soil_om_by_state.png"
+    fig, ax = plt.subplots(figsize=(8, 5))
+    slugs = sorted(data["grower_slug"].unique())
+    groups = [data[data["grower_slug"] == s]["avg_om_pct"].dropna() for s in slugs]
+    labels = [_label(s) for s in slugs]
+    colors = [_color(s) for s in slugs]
+    labels_w_n = [f"{l}\n(n={len(g)})" for l, g in zip(labels, groups)]
+    bp = ax.boxplot(groups, patch_artist=True)
+    ax.set_xticklabels(labels_w_n)
+    for patch, c in zip(bp["boxes"], colors):
+        patch.set_facecolor(c)
+        patch.set_alpha(0.6)
+    ax.set_ylabel("Organic matter (%)")
+    ax.set_title("Soil organic matter by state (SSURGO)")
+    ax.grid(True, alpha=0.3, axis="y")
+    plt.tight_layout()
+    fig.savefig(out, dpi=150, bbox_inches="tight")
+    plt.close(fig)
+    return out
+
+
+def plot_soil_texture(data: pd.DataFrame, output_base: Path) -> Path:
+    out = _output_dir(output_base, "soil") / "soil_texture_comparison.png"
+    tex = data.copy()
+    tex["avg_silt_pct"] = 100.0 - tex["avg_clay_pct"] - tex["avg_sand_pct"]
+    stats = tex.groupby("grower_label")[["avg_clay_pct", "avg_sand_pct", "avg_silt_pct"]].mean().reset_index()
+    fig, ax = plt.subplots(figsize=(8, 5))
+    x = np.arange(len(stats))
+    w = 0.5
+    ax.bar(x, stats["avg_sand_pct"], w, label="Sand", color="#e8a735", alpha=0.85)
+    ax.bar(x, stats["avg_clay_pct"], w, bottom=stats["avg_sand_pct"], label="Clay", color="#c25b3a", alpha=0.85)
+    ax.bar(x, stats["avg_silt_pct"], w,
+           bottom=stats["avg_sand_pct"] + stats["avg_clay_pct"],
+           label="Silt", color="#7ba748", alpha=0.85)
+    ax.set_xticks(x)
+    ax.set_xticklabels(stats["grower_label"])
+    ax.set_ylabel("Percent (%)")
+    ax.set_title("Soil texture composition by state (SSURGO)")
+    ax.legend()
+    ax.set_ylim(0, 105)
+    ax.grid(True, alpha=0.3, axis="y")
+    plt.tight_layout()
+    fig.savefig(out, dpi=150, bbox_inches="tight")
+    plt.close(fig)
+    return out
+
+
 PLOT_FUNCTIONS = {
     "boundaries": [
         ("field_area_histogram", plot_field_area_histogram),
@@ -408,6 +491,11 @@ PLOT_FUNCTIONS = {
     ],
     "geospatial": [
         ("grower_overview_map", plot_grower_overview_map),
+    ],
+    "soil": [
+        ("soil_ph", plot_soil_ph),
+        ("soil_om", plot_soil_om),
+        ("soil_texture", plot_soil_texture),
     ],
 }
 
@@ -445,6 +533,11 @@ def run_all(
     if "geospatial" in categories and not grower_data["boundaries"].empty:
         for name, func in PLOT_FUNCTIONS["geospatial"]:
             p = func(grower_data["boundaries"], output_base)
+            generated.append(p)
+
+    if "soil" in categories and not grower_data.get("soil", pd.DataFrame()).empty:
+        for name, func in PLOT_FUNCTIONS["soil"]:
+            p = func(grower_data["soil"], output_base)
             generated.append(p)
 
     return generated

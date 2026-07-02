@@ -30,6 +30,14 @@ Generate 9 static matplotlib PNG plots comparing field boundaries, CDL crop data
 | Crop diversity | `cdl/crop_diversity_by_field.png` | Distinct crop count per field |
 | Corn vs Soy rotation | `cdl/corn_soy_rotation_comparison.png` | Corn and soybean years comparison |
 
+### Soil
+
+| Plot | File | Story |
+|---|---|---|
+| Soil pH by state | `soil/soil_ph_by_state.png` | pH range per state — NE more alkaline, IL/IA more acidic |
+| Organic matter by state | `soil/soil_om_by_state.png` | OM range per state — IL prairie soils highest |
+| Soil texture comparison | `soil/soil_texture_comparison.png` | Clay/sand/silt composition per state |
+
 ### Weather
 
 | Plot | File | Story |
@@ -88,6 +96,9 @@ python scripts/run_eda.py --categories boundaries,weather
 | `T2M_MAX`, `T2M_MIN` | same | float (°C) | GDD |
 | `PRECTOTCORR` | same | float (mm) | precipitation |
 | `date` | same | date | all weather plots |
+| `avg_ph` | `*_ssurgo_summary.csv` | float | soil pH plot |
+| `avg_om_pct` | same | float (%) | soil OM plot |
+| `avg_clay_pct`, `avg_sand_pct` | same | float (%) | soil texture plot |
 
 ## Requirements
 

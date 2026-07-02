@@ -35,7 +35,7 @@ def main() -> None:
         help="Comma-separated grower slugs (default: all three)",
     )
     parser.add_argument(
-        "--categories", default="boundaries,cdl,weather,geospatial",
+        "--categories", default="boundaries,cdl,weather,geospatial,soil",
         help="Comma-separated categories: boundaries,cdl,weather (default: all)",
     )
     parser.add_argument("--output", default=None, help="Output directory override")
@@ -80,6 +80,7 @@ def main() -> None:
     print(f"  Boundaries: {len(data['boundaries'])} records")
     print(f"  Rotations:  {len(data['rotations'])} records")
     print(f"  Weather:    {len(data['weather'])} records")
+    print(f"  Soil:       {len(data.get('soil',[]))} records")
 
     print(f"\nGenerating plots: {', '.join(categories)}")
     generated = run_all(data, output_base, categories=categories)
