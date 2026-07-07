@@ -12,6 +12,7 @@ import numpy as np
 import pandas as pd
 import rasterio
 import rasterio.mask
+import scipy.stats
 from shapely.geometry import mapping
 
 matplotlib.use("Agg")
@@ -212,6 +213,7 @@ def _caption_text(
     crop: str,
     year: int,
     coverage: dict | None = None,
+    spi_data: dict | None = None,
 ) -> str:
     w = weather_df[weather_df["year"] == year]
     ndvi_yr = ndvi_df[ndvi_df["year"] == year]
@@ -235,6 +237,17 @@ def _caption_text(
     )
     if hot_cnt or rain_cnt or ndvi_rise or ndvi_drop:
         cap += f" \u00b7 {hot_cnt} hot days \u00b7 {rain_cnt} heavy rain \u00b7 {ndvi_rise} NDVI rises \u00b7 {ndvi_drop} dips"
+
+    # SPI summary — most extreme month
+    if spi_data:
+        spi_extreme = None
+        for m, sp in spi_data.items():
+            sv = sp.get("spi")
+            if sv is not None and (spi_extreme is None or abs(sv) > abs(spi_extreme[1])):
+                spi_extreme = (int(m), sv, sp.get("category", ""))
+        if spi_extreme:
+            mn = ["", "", "", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"]
+            cap += f" \u00b7 SPI-3 {mn[spi_extreme[0]]}: {spi_extreme[1]:+.1f} ({spi_extreme[2]})"
     if missing_months:
         cap += f" \u00b7 MISSING: month(s) {missing_months}"
     if warning:
@@ -271,6 +284,103 @@ def check_coverage(ndvi_df: pd.DataFrame, year: int) -> dict:
     }
 
 
+SPI_MONTHS = list(range(3, 12))  # Mar–Nov
+
+
+def calculate_spi(weather_df: pd.DataFrame, year: int, timescale: int = 3) -> dict[int, dict]:
+    monthly = weather_df.copy()
+    monthly["month"] = monthly["date"].dt.month
+    monthly["yr"] = monthly["date"].dt.year
+    monthly_precip = monthly.groupby(["yr", "month"])["PRECTOTCORR_IN"].sum().reset_index()
+
+    if timescale > 1:
+        monthly_precip["precip_agg"] = monthly_precip.groupby("month")["PRECTOTCORR_IN"].transform(
+            lambda s: s.rolling(timescale, min_periods=1).sum()
+        )
+    else:
+        monthly_precip["precip_agg"] = monthly_precip["PRECTOTCORR_IN"]
+
+    result: dict[int, dict] = {}
+    for month in SPI_MONTHS:
+        mvals = monthly_precip[monthly_precip["month"] == month]["precip_agg"].dropna().values
+        if len(mvals) < 5:
+            result[month] = {"spi": None, "category": "insufficient data"}
+            continue
+        nz = mvals[mvals > 0]
+        p_zero = 1.0 - len(nz) / len(mvals)
+        if len(nz) < 3:
+            result[month] = {"spi": None, "category": "insufficient data"}
+            continue
+        shape, loc, scale = scipy.stats.gamma.fit(nz, floc=0)
+        yr_row = monthly_precip[
+            (monthly_precip["month"] == month) & (monthly_precip["yr"] == year)
+        ]
+        if yr_row.empty:
+            result[month] = {"spi": None, "category": "insufficient data"}
+            continue
+        val = yr_row["precip_agg"].values[0]
+        if val <= 0:
+            cdf = p_zero
+        else:
+            cdf = p_zero + (1 - p_zero) * scipy.stats.gamma.cdf(val, shape, loc=loc, scale=scale)
+        cdf = np.clip(cdf, 1e-7, 1 - 1e-7)
+        spi_val = float(scipy.stats.norm.ppf(cdf))
+
+        if spi_val > 1.5: cat = "very wet"
+        elif spi_val > 1.0: cat = "moderately wet"
+        elif spi_val < -1.5: cat = "severely dry"
+        elif spi_val < -1.0: cat = "moderately dry"
+        else: cat = "near normal"
+
+        result[month] = {"spi": round(spi_val, 2), "category": cat}
+    return result
+
+
+SPI_CATEGORY_COLORS = {
+    "very wet": "#0571b0", "moderately wet": "#92c5de", "near normal": "#f7f7f7",
+    "moderately dry": "#f4a582", "severely dry": "#ca0020", "insufficient data": "#cccccc",
+}
+
+
+def _serialize(obj):
+    if isinstance(obj, pd.Timestamp):
+        return obj.strftime("%Y-%m-%d")
+    if isinstance(obj, (np.integer,)):
+        return int(obj)
+    if isinstance(obj, (np.floating,)):
+        return float(obj)
+    if isinstance(obj, (np.ndarray,)):
+        return obj.tolist()
+    raise TypeError(f"Not serializable: {type(obj)}")
+
+
+def save_event_summary(events: list[dict], spi_data: dict, year: int, crop: str,
+                       ndvi_df: pd.DataFrame, weather_df: pd.DataFrame,
+                       coverage: dict, output_dir: Path) -> Path:
+    w = weather_df[weather_df["year"] == year]
+    ndvi_yr = ndvi_df[ndvi_df["year"] == year]
+    peak_ndvi = float(ndvi_yr["ndvi_mean"].max()) if not ndvi_yr.empty else 0
+    total_precip_in = float(w["PRECTOTCORR_IN"].sum()) if not w.empty else 0
+    peak_gdd = float(w["cum_gdd_f"].max()) if not w.empty else 0
+    spi_clean = {str(k): v for k, v in spi_data.items()}
+    payload = {
+        "year": year, "crop": crop,
+        "ndvi_scenes": len(ndvi_yr),
+        "peak_ndvi": round(peak_ndvi, 3),
+        "total_precip_in": round(total_precip_in, 1),
+        "peak_gdd_f": round(peak_gdd, 0),
+        "event_count": len(events),
+        "events": events,
+        "spi": spi_clean,
+        "coverage": coverage,
+    }
+    out_dir = output_dir / "events"
+    out_dir.mkdir(parents=True, exist_ok=True)
+    out_path = out_dir / f"{year}_events.json"
+    out_path.write_text(json.dumps(payload, indent=2, default=_serialize) + "\n", encoding="utf-8")
+    return out_path
+
+
 def plot_storyline(
     ndvi_df: pd.DataFrame,
     weather_df: pd.DataFrame,
@@ -281,6 +391,7 @@ def plot_storyline(
     year: int,
     events: list[dict] | None = None,
     caption: str | None = None,
+    spi_data: dict | None = None,
 ) -> Path:
     color = YEAR_COLORS.get(year, "#333333")
     GR = (60, 320)
@@ -295,15 +406,15 @@ def plot_storyline(
     MONTH_DOYS = [60, 91, 121, 152, 182, 213, 244, 274, 305]
     MONTH_LABELS = ["Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov"]
 
-    fig, axes = plt.subplots(4, 1, figsize=(9, 12), sharex=False)
-    fig.subplots_adjust(left=0.12, right=0.88, top=0.86, bottom=0.10, hspace=0.12)
+    fig, axes = plt.subplots(5, 1, figsize=(11, 11), sharex=False)
+    fig.subplots_adjust(left=0.10, right=0.90, top=0.86, bottom=0.12, hspace=0.15)
 
     fig.text(0.5, 0.97, f"Field-Season Weather and NDVI Storyline \u2014 {field_id}/{year}",
              ha="center", fontsize=12, fontweight="bold")
 
-    ax_ndvi, ax_precip, ax_temp, ax_gdd = axes
+    ax_ndvi, ax_precip, ax_temp, ax_gdd, ax_spi = axes
 
-    for ax in [ax_ndvi, ax_temp, ax_gdd]:
+    for ax in [ax_ndvi, ax_temp, ax_gdd, ax_spi]:
         ax.spines["top"].set_visible(False)
         ax.spines["right"].set_visible(False)
 
@@ -342,7 +453,7 @@ def plot_storyline(
                              fontweight="bold",
                              bbox=dict(facecolor="white", edgecolor=ecolor,
                                        boxstyle="round,pad=0.15", alpha=0.85),
-                             rotation=30)
+                             rotation=0)
     ax_ndvi.set_xlim(GR)
     ax_ndvi.set_xticks(MONTH_DOYS)
     ax_ndvi.set_xticklabels(MONTH_LABELS, fontsize=6.5)
@@ -409,7 +520,7 @@ def plot_storyline(
     ax_temp.set_xticks(MONTH_DOYS)
     ax_temp.set_xticklabels(MONTH_LABELS, fontsize=6.5)
     ax_temp.set_ylabel("Temp. (\u00b0F)")
-    ax_temp.set_title("Temp. (\u00b0F)", loc="left")
+    ax_temp.set_title("Temperature and extremes (\u00b0F)", loc="left")
     ax_temp.grid(True, alpha=0.3)
 
     # ===== PANEL 4: Cumulative GDD (°F-days) =====
@@ -430,13 +541,62 @@ def plot_storyline(
     ax_gdd.set_title("Cumulative GDD (\u00b0F-days)", loc="left")
     ax_gdd.grid(True, alpha=0.3, axis="y")
 
+    # ===== PANEL 5: SPI-3 (shared DOY axis) =====
+    SPI_DOYS = {3: 75, 4: 105, 5: 136, 6: 166, 7: 197, 8: 228, 9: 258, 10: 289, 11: 310}
+
+    if spi_data:
+        months_list = SPI_MONTHS
+        doys = [SPI_DOYS[m] for m in months_list]
+        spi_vals = [spi_data.get(m, {}).get("spi") for m in months_list]
+        spi_cats = [spi_data.get(m, {}).get("category", "") for m in months_list]
+        bar_colors = [SPI_CATEGORY_COLORS.get(c, "#cccccc") for c in spi_cats]
+        valid_mask = [v is not None for v in spi_vals]
+        valid_doys = [d for d, ok in zip(doys, valid_mask) if ok]
+        valid_vals = [v for v, ok in zip(spi_vals, valid_mask) if ok]
+        valid_colors = [c for c, ok in zip(bar_colors, valid_mask) if ok]
+        valid_months = [m for m, ok in zip(months_list, valid_mask) if ok]
+
+        if valid_vals:
+            ax_spi.bar(valid_doys, valid_vals, width=20, color=valid_colors,
+                       edgecolor="#666", alpha=0.85)
+            ax_spi.axhline(0, color="#333", linewidth=0.8)
+            ax_spi.axhline(1, color="#0571b0", linewidth=0.5, linestyle=":", alpha=0.5)
+            ax_spi.axhline(-1, color="#ca0020", linewidth=0.5, linestyle=":", alpha=0.5)
+            ax_spi.axhline(1.5, color="#0571b0", linewidth=0.5, linestyle="--", alpha=0.3)
+            ax_spi.axhline(-1.5, color="#ca0020", linewidth=0.5, linestyle="--", alpha=0.3)
+            ax_spi.set_xlim(60, 320)
+            ax_spi.set_ylim(-2.8, 2.8)
+            ax_spi.set_xticks(MONTH_DOYS)
+            ax_spi.set_xticklabels(MONTH_LABELS, fontsize=6.5)
+            ax_spi.set_ylabel("SPI-3")
+            ax_spi.set_title("SPI-3 (Standardized Precipitation Index)", loc="left")
+            ax_spi.grid(True, alpha=0.3, axis="y")
+
+            # Annotations for |SPI| > 1.0
+            for m, d, v, c in zip(valid_months, valid_doys, valid_vals, valid_colors):
+                if abs(v) > 1.0:
+                    cat = spi_data[m]["category"]
+                    offset = 0.2 if v > 0 else -0.2
+                    ax_spi.annotate(f"{cat} ({v:+.1f})", (d, v + offset),
+                                    fontsize=7, color=c, ha="center", fontweight="bold",
+                                    bbox=dict(facecolor="white", edgecolor=c,
+                                              boxstyle="round,pad=0.12", alpha=0.85))
+
+            # Dry/Wet labels at top corners
+            ax_spi.text(65, 2.5, "Wet", fontsize=7, color="#0571b0", alpha=0.6, fontweight="bold")
+            ax_spi.text(65, -2.5, "Dry", fontsize=7, color="#ca0020", alpha=0.6, fontweight="bold")
+        else:
+            ax_spi.text(0.5, 0.5, "Insufficient data for SPI calculation",
+                        ha="center", va="center", transform=ax_spi.transAxes, fontsize=9)
+            ax_spi.set_title("SPI-3 (Standardized Precipitation Index)", loc="left")
+
     # ----- Common x-axis label -----
-    fig.text(0.5, 0.02, "Shared Growing Season Timeline", ha="center",
+    fig.text(0.5, 0.015, "Shared Growing Season Timeline", ha="center",
              fontsize=9, fontweight="bold", color="#333")
 
     # ----- Caption above the top panel (gap maintained) -----
     if caption:
-        fig.text(0.5, 0.90, caption, ha="center", fontsize=7.5,
+        fig.text(0.5, 0.89, caption, ha="center", fontsize=7.5,
                  style="italic", color="#444", wrap=True)
 
     output_path.parent.mkdir(parents=True, exist_ok=True)
@@ -464,12 +624,15 @@ def generate_storyline(
     events = detect_events(ndvi_df, weather_df, year=year)
     coverage = check_coverage(ndvi_df, year)
     crop = crop_history.get(year, "")
-    caption = _caption_text(ndvi_df, weather_df, events, crop, year, coverage=coverage)
+    spi_data = calculate_spi(weather_df, year=year, timescale=3)
+    caption = _caption_text(ndvi_df, weather_df, events, crop, year, coverage=coverage, spi_data=spi_data)
     farm_name = farm_slug.replace("-", " ").title()
 
     output_path = output_dir / f"{year}_field_season_storyline.png"
     plot_storyline(ndvi_df, weather_df, crop_history, field_id, farm_name,
-                   output_path, year=year, events=events, caption=caption)
+                   output_path, year=year, events=events, caption=caption, spi_data=spi_data)
+
+    save_event_summary(events, spi_data, year, crop, ndvi_df, weather_df, coverage, output_dir)
 
     peak_ndvi = ndvi_df[ndvi_df["year"] == year]["ndvi_mean"].max() if not ndvi_df.empty else 0
     total_precip_in = weather_df[weather_df["year"] == year]["PRECTOTCORR_IN"].sum() if not weather_df.empty else 0

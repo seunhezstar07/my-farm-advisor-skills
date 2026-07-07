@@ -75,7 +75,7 @@ def main() -> None:
         runtime_base / "growers" / args.grower_slug / "farms" / args.farm_slug
         / "derived" / "tables"
     )
-    weather_csv = tables_dir / f"{prefix}_weather_2021_2025.csv"
+    weather_csv = tables_dir / f"{prefix}_weather_2015_2025.csv"
     rotation_csv = tables_dir / f"{prefix}_crop_rotation.csv"
 
     if not weather_csv.exists():
