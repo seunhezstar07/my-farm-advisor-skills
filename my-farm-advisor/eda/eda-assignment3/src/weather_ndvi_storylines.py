@@ -557,8 +557,17 @@ def plot_storyline(
         valid_months = [m for m, ok in zip(months_list, valid_mask) if ok]
 
         if valid_vals:
-            ax_spi.bar(valid_doys, valid_vals, width=20, color=valid_colors,
-                       edgecolor="#666", alpha=0.85)
+            vals_arr = np.array(valid_vals)
+            doys_arr = np.array(valid_doys)
+            ax_spi.fill_between(doys_arr, 0, vals_arr, where=(vals_arr >= 0),
+                                color="#0571b0", alpha=0.25, interpolate=True)
+            ax_spi.fill_between(doys_arr, 0, vals_arr, where=(vals_arr < 0),
+                                color="#ca0020", alpha=0.25, interpolate=True)
+            ax_spi.plot(doys_arr, vals_arr, color="#333", linewidth=1.2, zorder=4)
+            for d, v, c in zip(valid_doys, valid_vals, valid_colors):
+                ax_spi.plot(d, v, marker="o", color=c, markersize=6, zorder=5,
+                            markeredgecolor="#333", markeredgewidth=0.5)
+
             ax_spi.axhline(0, color="#333", linewidth=0.8)
             ax_spi.axhline(1, color="#0571b0", linewidth=0.5, linestyle=":", alpha=0.5)
             ax_spi.axhline(-1, color="#ca0020", linewidth=0.5, linestyle=":", alpha=0.5)
