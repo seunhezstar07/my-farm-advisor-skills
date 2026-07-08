@@ -106,11 +106,15 @@ def _query_overpass_bbox(bbox: tuple[float, float, float, float]) -> dict:
     );
     out geom;
     """
+    _overpass_headers = {
+        "User-Agent": "MyFarmAdvisor/1.0 (academic; assignment2)",
+        "Accept": "application/json",
+    }
     last_error: Exception | None = None
     for endpoint in OVERPASS_URLS:
         for attempt in range(1, 4):
             try:
-                response = requests.post(endpoint, data={"data": query}, timeout=240)
+                response = requests.post(endpoint, data={"data": query}, headers=_overpass_headers, timeout=240)
                 response.raise_for_status()
                 return response.json()
             except Exception as exc:
